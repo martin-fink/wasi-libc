@@ -1,2 +1,6 @@
 sysroot
 build
+
+# nix
+.direnv
+
