@@ -41,10 +41,6 @@ pub fn to_c(doc: &Document, inputs_str: &str) -> Generated {
 #error <wasi/api.h> is only supported on WASI platforms.
 #endif
 
-#ifndef __wasm32__
-#error <wasi/api.h> only supports wasm32; doesn't yet support wasm64
-#endif
-
 #include <stddef.h>
 #include <stdint.h>
 
@@ -56,7 +52,7 @@ _Static_assert(_Alignof(int32_t) == 4, "non-wasi data layout");
 _Static_assert(_Alignof(uint32_t) == 4, "non-wasi data layout");
 _Static_assert(_Alignof(int64_t) == 8, "non-wasi data layout");
 _Static_assert(_Alignof(uint64_t) == 8, "non-wasi data layout");
-_Static_assert(_Alignof(void*) == 4, "non-wasi data layout");
+_Static_assert(_Alignof(void*) == 8, "non-wasi data layout");
 
 #ifdef __cplusplus
 extern "C" {{
