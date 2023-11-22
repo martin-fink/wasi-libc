@@ -342,7 +342,7 @@ endif
 #    should come earlier in the search path, so they can "override"
 #    and/or `#include_next` the public headers. `-isystem` (like
 #    `-idirafter`) comes later in the search path than `-I`.
-CFLAGS += -isystem "$(SYSROOT_INC)"
+CFLAGS += -isystem "$(SYSROOT_INC)" -mmem-safety
 
 # These variables describe the locations of various files and directories in
 # the build tree.

@@ -2222,6 +2222,19 @@ typedef unsigned int flag_t;           /* The type of various bit flag sets */
 #define MIN_CHUNK_SIZE\
   ((MCHUNK_SIZE + CHUNK_ALIGN_MASK) & ~CHUNK_ALIGN_MASK)
 
+#ifdef MEMSAFETY
+#define GRANULE_SIZE 16
+#define align_to_granule(size) ((size + (GRANULE_SIZE - 1)) & (~(GRANULE_SIZE - 1)))
+#define untag_ptr(mem) __builtin_wasm_untag_ptr(mem)
+#define segment_new(mem, size) __builtin_wasm_segment_new(mem, size)
+#define segment_free(mem, size) __builtin_wasm_segment_free(mem, size)
+#else
+#define align_to_granule(size) (size)
+#define untag_ptr(mem) (mem)
+#define segment_new(mem, size) (mem)
+#define segment_free(mem, size)
+#endif
+
 /* conversion from malloc headers to user pointers, and back */
 #define chunk2mem(p)        ((void*)((char*)(p)       + TWO_SIZE_T_SIZES))
 #define mem2chunk(mem)      ((mchunkptr)((char*)(mem) - TWO_SIZE_T_SIZES))
@@ -4589,6 +4602,8 @@ void* dlmalloc(size_t bytes) {
      The ugly goto's here ensure that postaction occurs along all paths.
   */
 
+  bytes = align_to_granule(bytes);
+
 #if USE_LOCKS
   ensure_initialization(); /* initialize in sys_alloc if not using locks */
 #endif
@@ -4701,6 +4716,8 @@ void* dlmalloc(size_t bytes) {
     mem = sys_alloc(gm, nb);
 
   postaction:
+    // tag the memory region here.
+    mem = segment_new(mem, bytes);
     POSTACTION(gm);
     return mem;
   }
@@ -4716,6 +4733,7 @@ void dlfree(void* mem) {
      free chunks, if they exist, and then place in a bin.  Intermixed
      with special cases for top, dv, mmapped chunks, and usage errors.
   */
+  mem = untag_ptr(mem);
 
   if (mem != 0) {
     mchunkptr p  = mem2chunk(mem);
@@ -4730,8 +4748,10 @@ void dlfree(void* mem) {
 #endif /* FOOTERS */
     if (!PREACTION(fm)) {
       check_inuse_chunk(fm, p);
-      if (RTCHECK(ok_address(fm, p) && ok_inuse(p))) {
+        if (RTCHECK(ok_address(fm, p) && ok_inuse(p))) {
         size_t psize = chunksize(p);
+        // TODO: check if psize is actually the right size to use
+        segment_free(mem, psize);
         mchunkptr next = chunk_plus_offset(p, psize);
         if (!pinuse(p)) {
           size_t prevsize = p->prev_foot;
@@ -4841,6 +4861,8 @@ void* dlcalloc(size_t n_elements, size_t elem_size) {
 /* Try to realloc; only in-place unless can_move true */
 static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
                                    int can_move) {
+    // TODO: at the moment not supported.
+//  nb = align_to_granule(nb);
   mchunkptr newp = 0;
   size_t oldsize = chunksize(p);
   mchunkptr next = chunk_plus_offset(p, oldsize);
