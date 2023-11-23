@@ -521,6 +521,8 @@ MAX_RELEASE_CHECK_RATE   default: 4095 unless not HAVE_MMAP
   improvement at the expense of carrying around more memory.
 */
 
+#include <stdio.h>
+
 /* Version identifier to allow people to support multiple versions */
 #ifndef DLMALLOC_VERSION
 #define DLMALLOC_VERSION 20806
@@ -2222,22 +2224,24 @@ typedef unsigned int flag_t;           /* The type of various bit flag sets */
 #define MIN_CHUNK_SIZE\
   ((MCHUNK_SIZE + CHUNK_ALIGN_MASK) & ~CHUNK_ALIGN_MASK)
 
-#ifdef MEMSAFETY
+#ifdef WASM_MEMSAFETY
 #define GRANULE_SIZE 16
 #define align_to_granule(size) ((size + (GRANULE_SIZE - 1)) & (~(GRANULE_SIZE - 1)))
 #define untag_ptr(mem) __builtin_wasm_untag_ptr(mem)
 #define segment_new(mem, size) __builtin_wasm_segment_new(mem, size)
 #define segment_free(mem, size) __builtin_wasm_segment_free(mem, size)
+#define segment_set_tag(mem, tag, size) __builtin_wasm_segment_set_tag(mem, tag, size)
 #else
 #define align_to_granule(size) (size)
 #define untag_ptr(mem) (mem)
 #define segment_new(mem, size) (mem)
 #define segment_free(mem, size)
-#endif
+#define segment_set_tag(mem, tag, size)
+#endif // WASM_MEMSAFETY
 
 /* conversion from malloc headers to user pointers, and back */
 #define chunk2mem(p)        ((void*)((char*)(p)       + TWO_SIZE_T_SIZES))
-#define mem2chunk(mem)      ((mchunkptr)((char*)(mem) - TWO_SIZE_T_SIZES))
+#define mem2chunk(mem)      ((mchunkptr)untag_ptr((char*)(mem) - TWO_SIZE_T_SIZES))
 /* chunk associated with aligned address A */
 #define align_as_chunk(A)   (mchunkptr)((A) + align_offset(chunk2mem(A)))
 
@@ -2289,6 +2293,8 @@ typedef unsigned int flag_t;           /* The type of various bit flag sets */
 /* Treat space at ptr +/- offset as a chunk */
 #define chunk_plus_offset(p, s)  ((mchunkptr)(((char*)(p)) + (s)))
 #define chunk_minus_offset(p, s) ((mchunkptr)(((char*)(p)) - (s)))
+
+#define void_plus_offset(p, s)  ((void*)(((char*)(p)) + (s)))
 
 /* Ptr to next or previous physical malloc_chunk. */
 #define next_chunk(p) ((mchunkptr)( ((char*)(p)) + ((p)->head & ~FLAG_BITS)))
@@ -4601,8 +4607,9 @@ void* dlmalloc(size_t bytes) {
 
      The ugly goto's here ensure that postaction occurs along all paths.
   */
-
+    fprintf(stderr, "bytes = %zu\n", bytes);
   bytes = align_to_granule(bytes);
+    fprintf(stderr, "bytes = %zu\n", bytes);
 
 #if USE_LOCKS
   ensure_initialization(); /* initialize in sys_alloc if not using locks */
@@ -4750,7 +4757,6 @@ void dlfree(void* mem) {
       check_inuse_chunk(fm, p);
         if (RTCHECK(ok_address(fm, p) && ok_inuse(p))) {
         size_t psize = chunksize(p);
-        // TODO: check if psize is actually the right size to use
         segment_free(mem, psize);
         mchunkptr next = chunk_plus_offset(p, psize);
         if (!pinuse(p)) {
@@ -4859,22 +4865,31 @@ void* dlcalloc(size_t n_elements, size_t elem_size) {
 /* ------------ Internal support for realloc, memalign, etc -------------- */
 
 /* Try to realloc; only in-place unless can_move true */
+#ifdef WASM_MEMSAFETY
+static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
+                                   int can_move, void *tag) {
+#else
 static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
                                    int can_move) {
-    // TODO: at the moment not supported.
-//  nb = align_to_granule(nb);
+#endif
+  nb = align_to_granule(nb);
+
   mchunkptr newp = 0;
   size_t oldsize = chunksize(p);
   mchunkptr next = chunk_plus_offset(p, oldsize);
   if (RTCHECK(ok_address(m, p) && ok_inuse(p) &&
               ok_next(p, next) && ok_pinuse(next))) {
     if (is_mmapped(p)) {
+      segment_set_tag(tag, 0, oldsize);
       newp = mmap_resize(m, p, nb, can_move);
+      segment_set_tag(chunk2mem(newp), tag, nb);
     }
     else if (oldsize >= nb) {             /* already big enough */
       size_t rsize = oldsize - nb;
       if (rsize >= MIN_CHUNK_SIZE) {      /* split off remainder */
         mchunkptr r = chunk_plus_offset(p, nb);
+//        fprintf(stderr, "Untagging %p (= %p + %zu) with tag 0, size %zu\n", (void*)chunk_plus_offset(p, nb), tag, nb, rsize);
+        segment_set_tag((void*)chunk_plus_offset(p, nb), 0, rsize);
         set_inuse(m, p, nb);
         set_inuse(m, r, rsize);
         dispose_chunk(m, r, rsize);
@@ -4890,6 +4905,8 @@ static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
         newtop->head = newtopsize |PINUSE_BIT;
         m->top = newtop;
         m->topsize = newtopsize;
+//        fprintf(stderr, "Tagging %p with tag %p, size %zu\n", (void*)chunk_plus_offset(p, oldsize), tag, nb - oldsize);
+        segment_set_tag((void*)chunk_plus_offset(p, oldsize), tag, nb - oldsize);
         newp = p;
       }
     }
@@ -4912,6 +4929,8 @@ static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
           m->dvsize = 0;
           m->dv = 0;
         }
+//        fprintf(stderr, "Tagging %p with tag %p, size %zu\n", (void*)chunk_plus_offset(p, oldsize), tag, nb - oldsize);
+        segment_set_tag((void*)chunk_plus_offset(p, oldsize), tag, nb - oldsize);
         newp = p;
       }
     }
@@ -4930,6 +4949,8 @@ static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
           set_inuse(m, r, rsize);
           dispose_chunk(m, r, rsize);
         }
+//        fprintf(stderr, "Tagging %p with tag %p, size %zu\n", (void*)chunk_plus_offset(p, oldsize), tag, nb - oldsize);
+        segment_set_tag((void*)chunk_plus_offset(p, oldsize), tag, nb - oldsize);
         newp = p;
       }
     }
@@ -5314,7 +5335,11 @@ void* dlrealloc(void* oldmem, size_t bytes) {
     }
 #endif /* FOOTERS */
     if (!PREACTION(m)) {
+#ifdef WASM_MEMSAFETY
+      mchunkptr newp = try_realloc_chunk(m, oldp, nb, 1, oldmem);
+#else
       mchunkptr newp = try_realloc_chunk(m, oldp, nb, 1);
+#endif
       POSTACTION(m);
       if (newp != 0) {
         check_inuse_chunk(m, newp);
@@ -5352,7 +5377,11 @@ void* dlrealloc_in_place(void* oldmem, size_t bytes) {
       }
 #endif /* FOOTERS */
       if (!PREACTION(m)) {
+#ifdef WASM_MEMSAFETY
+        mchunkptr newp = try_realloc_chunk(m, oldp, nb, 0, oldmem);
+#else
         mchunkptr newp = try_realloc_chunk(m, oldp, nb, 0);
+#endif
         POSTACTION(m);
         if (newp == oldp) {
           check_inuse_chunk(m, newp);
@@ -5864,7 +5893,11 @@ void* mspace_realloc(mspace msp, void* oldmem, size_t bytes) {
     }
 #endif /* FOOTERS */
     if (!PREACTION(m)) {
+#ifdef WASM_MEMSAFETY
+      mchunkptr newp = try_realloc_chunk(m, oldp, nb, 0, oldmem);
+#else
       mchunkptr newp = try_realloc_chunk(m, oldp, nb, 1);
+#endif
       POSTACTION(m);
       if (newp != 0) {
         check_inuse_chunk(m, newp);
@@ -5903,7 +5936,11 @@ void* mspace_realloc_in_place(mspace msp, void* oldmem, size_t bytes) {
       }
 #endif /* FOOTERS */
       if (!PREACTION(m)) {
+#ifdef WASM_MEMSAFETY
+        mchunkptr newp = try_realloc_chunk(m, oldp, nb, 0, oldmem);
+#else
         mchunkptr newp = try_realloc_chunk(m, oldp, nb, 0);
+#endif
         POSTACTION(m);
         if (newp == oldp) {
           check_inuse_chunk(m, newp);
