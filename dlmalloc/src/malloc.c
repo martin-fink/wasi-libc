@@ -4607,9 +4607,7 @@ void* dlmalloc(size_t bytes) {
 
      The ugly goto's here ensure that postaction occurs along all paths.
   */
-    fprintf(stderr, "bytes = %zu\n", bytes);
   bytes = align_to_granule(bytes);
-    fprintf(stderr, "bytes = %zu\n", bytes);
 
 #if USE_LOCKS
   ensure_initialization(); /* initialize in sys_alloc if not using locks */
