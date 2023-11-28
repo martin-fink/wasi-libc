@@ -2228,12 +2228,14 @@ typedef unsigned int flag_t;           /* The type of various bit flag sets */
 #define GRANULE_SIZE 16
 #define align_to_granule(size) ((size + (GRANULE_SIZE - 1)) & (~(GRANULE_SIZE - 1)))
 #define untag_ptr(mem) __builtin_wasm_untag_ptr(mem)
+#define tag_ptr(mem, tag) __builtin_wasm_tag_ptr(mem, tag)
 #define segment_new(mem, size) __builtin_wasm_segment_new(mem, size)
 #define segment_free(mem, size) __builtin_wasm_segment_free(mem, size)
 #define segment_set_tag(mem, tag, size) __builtin_wasm_segment_set_tag(mem, tag, size)
 #else
 #define align_to_granule(size) (size)
 #define untag_ptr(mem) (mem)
+#define tag_ptr(mem, tag)
 #define segment_new(mem, size) (mem)
 #define segment_free(mem, size)
 #define segment_set_tag(mem, tag, size)
@@ -4721,8 +4723,8 @@ void* dlmalloc(size_t bytes) {
     mem = sys_alloc(gm, nb);
 
   postaction:
-    // tag the memory region here.
     mem = segment_new(mem, bytes);
+//    fprintf(stderr, "Tagging %p with random tag, size %zu\n", mem, bytes);
     POSTACTION(gm);
     return mem;
   }
@@ -4755,6 +4757,7 @@ void dlfree(void* mem) {
       check_inuse_chunk(fm, p);
         if (RTCHECK(ok_address(fm, p) && ok_inuse(p))) {
         size_t psize = chunksize(p);
+//        fprintf(stderr, "untagging %p, size %zu\n", mem, psize);
         segment_free(mem, psize);
         mchunkptr next = chunk_plus_offset(p, psize);
         if (!pinuse(p)) {
@@ -4960,6 +4963,7 @@ static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
 }
 
 static void* internal_memalign(mstate m, size_t alignment, size_t bytes) {
+//  fprintf(stderr, "internal_memalign, align = %zu, bytes = %zu\n", alignment, bytes);
   void* mem = 0;
   if (alignment <  MIN_CHUNK_SIZE) /* must be at least a minimum chunk size */
     alignment = MIN_CHUNK_SIZE;
@@ -4976,7 +4980,10 @@ static void* internal_memalign(mstate m, size_t alignment, size_t bytes) {
   else {
     size_t nb = request2size(bytes);
     size_t req = nb + alignment + MIN_CHUNK_SIZE - CHUNK_OVERHEAD;
+//    fprintf(stderr, "requesting %zu bytes from internal malloc\n", req);
     mem = internal_malloc(m, req);
+//    fprintf(stderr, "requesting %zu bytes from internal malloc, got %p\n", req, mem);
+    // now we need to make sure the
     if (mem != 0) {
       mchunkptr p = mem2chunk(mem);
       if (PREACTION(m))
@@ -4997,6 +5004,10 @@ static void* internal_memalign(mstate m, size_t alignment, size_t bytes) {
           br : br+alignment;
         mchunkptr newp = (mchunkptr)pos;
         size_t leadsize = pos - (char*)(p);
+        if (leadsize != 0) {
+//          fprintf(stderr, "untagging %zu bytes, pointer %p; newp = %p\n", leadsize, mem, newp);
+          segment_set_tag(mem, 0, leadsize);
+        }
         size_t newsize = chunksize(p) - leadsize;
 
         if (is_mmapped(p)) { /* For mmapped chunks, just adjust offset */
@@ -5017,15 +5028,19 @@ static void* internal_memalign(mstate m, size_t alignment, size_t bytes) {
         if (size > nb + MIN_CHUNK_SIZE) {
           size_t remainder_size = size - nb;
           mchunkptr remainder = chunk_plus_offset(p, nb);
+//          fprintf(stderr, "untagging %zu bytes, pointer %p\n", remainder_size, (void*) remainder);
+          segment_set_tag((void*)remainder, 0, remainder_size);
           set_inuse(m, p, nb);
           set_inuse(m, remainder, remainder_size);
           dispose_chunk(m, remainder, remainder_size);
         }
       }
 
+      void *tag = mem;
       mem = chunk2mem(p);
       assert (chunksize(p) >= nb);
       assert(((size_t)mem & (alignment - 1)) == 0);
+      mem = tag_ptr(mem, tag);
       check_inuse_chunk(m, p);
       POSTACTION(m);
     }
