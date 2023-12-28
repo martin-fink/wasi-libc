@@ -5907,7 +5907,7 @@ void* mspace_realloc(mspace msp, void* oldmem, size_t bytes) {
 #endif /* FOOTERS */
     if (!PREACTION(m)) {
 #ifdef WASM_MEMSAFETY
-      mchunkptr newp = try_realloc_chunk(m, oldp, nb, 0, oldmem);
+      mchunkptr newp = try_realloc_chunk(m, oldp, nb, 1, oldmem);
 #else
       mchunkptr newp = try_realloc_chunk(m, oldp, nb, 1);
 #endif
