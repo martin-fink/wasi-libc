@@ -2322,7 +2322,10 @@ typedef unsigned int flag_t;           /* The type of various bit flag sets */
  (is_mmapped(p)? MMAP_CHUNK_OVERHEAD : CHUNK_OVERHEAD)
 
 /* Return true if malloced space is not necessarily cleared */
-#if MMAP_CLEARS
+#ifdef WASM_MEMSAFETY
+// with our wasm mem safety extension, all tagged memory is cleared
+#define calloc_must_clear(p) (0)
+#elif MMAP_CLEARS
 #define calloc_must_clear(p) (!is_mmapped(p))
 #else /* MMAP_CLEARS */
 #define calloc_must_clear(p) (1)
