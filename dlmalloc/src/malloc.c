@@ -4884,7 +4884,7 @@ static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
   if (RTCHECK(ok_address(m, p) && ok_inuse(p) &&
               ok_next(p, next) && ok_pinuse(next))) {
     if (is_mmapped(p)) {
-      segment_set_tag(tag, 0, oldsize);
+      segment_free(tag, oldsize);
       newp = mmap_resize(m, p, nb, can_move);
       segment_set_tag(chunk2mem(newp), tag, nb);
     }
@@ -4892,8 +4892,8 @@ static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
       size_t rsize = oldsize - nb;
       if (rsize >= MIN_CHUNK_SIZE) {      /* split off remainder */
         mchunkptr r = chunk_plus_offset(p, nb);
-//        fprintf(stderr, "Untagging %p (= %p + %zu) with tag 0, size %zu\n", (void*)chunk_plus_offset(p, nb), tag, nb, rsize);
-        segment_set_tag((void*)chunk_plus_offset(p, nb), 0, rsize);
+//        fprintf(stderr, "Untagging %p (= %p + %zu), size %zu\n", (void*)chunk_plus_offset(p, nb), tag, nb, rsize);
+        segment_free((void*)chunk_plus_offset(p, nb), rsize);
         set_inuse(m, p, nb);
         set_inuse(m, r, rsize);
         dispose_chunk(m, r, rsize);
@@ -5009,7 +5009,7 @@ static void* internal_memalign(mstate m, size_t alignment, size_t bytes) {
         size_t leadsize = pos - (char*)(p);
         if (leadsize != 0) {
 //          fprintf(stderr, "untagging %zu bytes, pointer %p; newp = %p\n", leadsize, mem, newp);
-          segment_set_tag(mem, 0, leadsize);
+          segment_free(mem, leadsize);
         }
         size_t newsize = chunksize(p) - leadsize;
 
@@ -5032,7 +5032,7 @@ static void* internal_memalign(mstate m, size_t alignment, size_t bytes) {
           size_t remainder_size = size - nb;
           mchunkptr remainder = chunk_plus_offset(p, nb);
 //          fprintf(stderr, "untagging %zu bytes, pointer %p\n", remainder_size, (void*) remainder);
-          segment_set_tag((void*)remainder, 0, remainder_size);
+          segment_free((void*)remainder, remainder_size);
           set_inuse(m, p, nb);
           set_inuse(m, remainder, remainder_size);
           dispose_chunk(m, remainder, remainder_size);
