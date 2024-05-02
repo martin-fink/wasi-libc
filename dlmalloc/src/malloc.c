@@ -2226,7 +2226,7 @@ typedef unsigned int flag_t;           /* The type of various bit flag sets */
 
 #ifdef WASM_MEMSAFETY
 #define GRANULE_SIZE 16
-#define align_to_granule(size) ((size + (GRANULE_SIZE - 1)) & (~(GRANULE_SIZE - 1)))
+#define align_to_granule(size) (((size) + (GRANULE_SIZE - 1)) & (~(GRANULE_SIZE - 1)))
 #define untag_ptr(mem) __builtin_wasm_untag_ptr(mem)
 #define tag_ptr(mem, tag) __builtin_wasm_tag_ptr(mem, tag)
 #define segment_new(mem, size) __builtin_wasm_segment_new(mem, size)
@@ -2235,10 +2235,10 @@ typedef unsigned int flag_t;           /* The type of various bit flag sets */
 #else
 #define align_to_granule(size) (size)
 #define untag_ptr(mem) (mem)
-#define tag_ptr(mem, tag)
+#define tag_ptr(mem, tag) (mem)
 #define segment_new(mem, size) (mem)
-#define segment_free(mem, size)
-#define segment_set_tag(mem, tag, size)
+#define segment_free(mem, size) do {} while (0)
+#define segment_set_tag(mem, tag, size) do {} while (0)
 #endif // WASM_MEMSAFETY
 
 /* conversion from malloc headers to user pointers, and back */
@@ -4967,6 +4967,7 @@ static mchunkptr try_realloc_chunk(mstate m, mchunkptr p, size_t nb,
 
 static void* internal_memalign(mstate m, size_t alignment, size_t bytes) {
 //  fprintf(stderr, "internal_memalign, align = %zu, bytes = %zu\n", alignment, bytes);
+  bytes = align_to_granule(bytes);
   void* mem = 0;
   if (alignment <  MIN_CHUNK_SIZE) /* must be at least a minimum chunk size */
     alignment = MIN_CHUNK_SIZE;
